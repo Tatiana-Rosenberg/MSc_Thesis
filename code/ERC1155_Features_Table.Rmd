@@ -1,0 +1,193 @@
+---
+title: "Untitled"
+author: "Tatiana Rosenberg"
+date: '2022-06-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r features_table}
+library(tibble)
+library(kableExtra)
+library(dplyr)
+
+raw_ERC_data <- readRDS("data/dataEventTransfer_06362022.rds")
+
+df_raw <- tibble(Feature = colnames(raw_ERC_data),
+                 Description = c("A contract address hosts a smart contract, which is a set of code stored on the blockchain that runs when predetermined conditions are met.", 
+                             "Hash of the transfer event ('TransferSingle')", 
+                             "Address of the sender", 
+                             "Address of the reciever", 
+                             "A Token ID is the unique identifier code for an NFT. It is a key data point that is used to distinguish one NFT from another on a blockchain.", 
+                             "Number of the block which the transaction is recorded", 
+                             "A gas fee is the amoundt (Ether) required for a user to make a transaction on the Ethereum Network.",
+                             "The offered gas fee must be at least equal to the gas price in order to be eligible for inclusion in a block.",
+                             "A transaction hash is a unique identifier that is generated whenever a transaction is performed and is used to track and trace the status of a transaction.", 
+                             "The transaction index indicates the integer position of the transaction within the block.", 
+                             "Timestamp of the transaction"),)
+
+kbl(df_raw, "html",
+    caption="<center>ERC-1155 Token Standard Dataset Features<center>",
+    ) %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down") %>%
+  column_spec(2, width = "35em") %>%
+  save_kable("ERC-1155_Features.pdf")
+
+
+### WITH VALUES IN ETHER AND USD ###
+
+ERC_data <- readRDS("data/ERC1155_data.rds")
+
+
+df <- tibble(Feature = colnames(ERC_data),
+             Description = c("A contract address hosts a smart contract, which is a set of code stored on the blockchain that runs when predetermined conditions are met.", 
+                             "??", 
+                             "?", 
+                             "?", 
+                             "A Token ID is the unique identifier code for an NFT. It is a key data point that is used to distinguish one NFT from another on a blockchain.", 
+                             "data?", 
+                             "blockNumber", 
+                             "time", 
+                             " Txn Hash or transaction hash is a unique identifier that is generated whenever a transaction is performed. A Txn Hash can be used to track and trace the status of a transaction.", "TsxnINDEX", 
+                             "", 
+                             "Conversion Rate of Ether to USD", 
+                             "Value of transaction in USD", 
+                             "Value of transaction in Ether"),
+             Example = c(ERC_data[1,]))
+
+kbl(df, 
+    caption="ERC-1155 Token Standard Dataset Features") %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down")
+
+###### FOR ERC-20 DATASET #####
+
+df <- tibble(Feature = c("hash",	"nonce",	
+                    "transaction_index",
+                    "from_address","to_address",
+                    "value","gas",	"gas_price",
+                    "input",
+                    "receipt_cumulative_gas_used",
+                    "receipt_gas_used",
+                    "block_timestamp",
+                    "block_number",	"block_hash",
+                    "from_scam",	"to_scam",
+                    "from_category","to_category"),
+             Description = c("A transaction hash is a unique identifier that is generated whenever a transaction is performed and is used to track and trace the status of a transaction.",
+                    "The nonce is the number of transactions sent from a given address.",
+                    "The transaction index indicates the integer position of the transaction within the block.",
+                    "Address of the sender", 
+                    "Address of the reciever", 
+                    "Total ?? Transferred",	
+                    "gas",	"gas_price",
+                    "input",
+                    "receipt_cumulative_gas_used",
+                    "receipt_gas_used",
+                    "block_timestamp",
+                    "block_number",	"block_hash",
+                    "Binary value indicating the address of the sender has part-took in illicit activities.",	
+                    "Binary value indicating the address of the reciever has part-took in illicit activities.",
+                    "Category of illicit activity of the sender: {'Fake ICO', 'Phishing', 'Scamming', nan}",
+                    "Category of illicit activity of the reciever: {'Phishing', 'Scamming', nan}"),)
+
+kbl(df, "html",
+    caption="<center>ERC-20 Token Standard Dataset Features<center>",
+    ) %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down") %>%
+  column_spec(2, width = "35em") %>%
+  save_kable("ERC-20_Features.pdf")
+
+###### FOR ETH GCN DATASET #####
+
+
+df_raw <- tibble(Feature = c('min_timestamp', 'max_timestamp',
+                             'med_timestamp', 'mean_timestamp',
+                             'min_gas', 'max_gas', 'med_gas', 'mean_gas',
+                             'out_count', 'min_outgoing_priceETH',
+                             'max_outgoing_priceETH', 
+                             'med_outgoing_priceETH',
+                             'mean_outgoing_priceETH', 'in_count',
+                             'min_incoming_priceETH',
+                             'max_incoming_priceETH',
+                             'med_incoming_priceETH',
+                             'mean_incoming_priceETH'),)
+                 #Description = c())
+
+kbl(df_raw, "html",
+    caption="<center>ETH GCN Node-Features<center>",
+    ) %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down") %>%
+  column_spec(1, width = "35em") %>%
+  save_kable("GCN_ETH_input.pdf")
+
+
+###### GCN Settings #####
+
+
+df_raw <- tibble('Setting' = c('Type', 'Dropout Rate',  
+                               'Layer Activation Function',
+                               'Units', 'Output Shape'),
+                 'Layer 1' = c('GCN', '0.25', 'ReLU', '12', '[V, 12]'),
+                 'Layer 2' = c('GCN', '0.25', 'ReLU', '8', '[V, 8]'),
+                 'Layer 3' = c('Dense', 'NA', 'NA', '2', '[V, 2]'))
+
+                 #'Optimizer' = 'Adamax',
+                 #'Learning Rate' = '0.007',
+                 #'L2 Coefficient' = 5e-3,
+
+
+kbl(df_raw, "html",
+    caption="<center>GCN Model Settings<center>",
+    ) %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down") %>%
+  column_spec(1, width = "20em") %>%
+  save_kable("GCN_Model_Settings.pdf")
+
+
+
+ERC1155_predictions <- read.csv("data/ERC1155_scam_preds_labs_2.csv",
+                         colClasses=c("address"="character"))
+labels <- unique(ERC1155_predictions$label)
+
+ERC1155_pred_count <- ERC1155_predictions %>% group_by(label) %>%
+  summarise(Count = n())
+
+
+df_preds <- tibble(Label = labels,
+                   Description = c("These addresses have no label on Etherscan.",
+                                   "Contracts detected as being heavily involved with Maximal Extractable Value (MEV - previously, Miner Extractable Value) transactions.",
+                                   "List of smart contracts with tokens.",
+                                   "These addresses send Ether to a deposit contract for staking."),
+                   Count = c(ERC1155_pred_count$Count[ERC1155_pred_count$label == 'None'],
+ ERC1155_pred_count$Count[ERC1155_pred_count$label == 'Contract Deployer'],
+ERC1155_pred_count$Count[ERC1155_pred_count$label == 'MEV Bot'], ERC1155_pred_count$Count[ERC1155_pred_count$label == 'Eth2 Depositor']))
+
+kbl(df_preds, "html",
+    caption="<center><center>",
+    ) %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down") %>%
+  column_spec(2, width = "20em") %>%
+  save_kable("ERC1155_Preds.pdf")
+
+
+```

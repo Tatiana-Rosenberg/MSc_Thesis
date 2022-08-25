@@ -1,0 +1,286 @@
+---
+title: "ERC-1155_data2"
+author: "Tatiana Rosenberg"
+date: '2022-05-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 'Ether' package
+
+```{r ether_pkg}
+library(ether)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(igraph)
+# Connecting to Ethereum network via public node
+# Using personal API key
+set_rpc_address("https://mainnet.infura.io/v3/", 
+                  key = "60d909470abe49139c0c2927d7ca6baa")
+
+
+# Validating the connection
+eth_protocolVersion()
+
+# Most recent block number
+currentBlock <- eth_blockNumber()
+
+```
+
+
+Suspicious addresses:
+
+```{r ERC1155_data}
+
+ERC1155_data <- readRDS("data/ERC1155_data_07_v2.rds",)
+
+ERC1155_graph <- graph(c(ERC1155_data$fromAddress,
+                          ERC1155_data$toAddress),
+                          directed = TRUE)
+
+# Get all unique addresses in suspicious dataset
+all_ads <- list()
+all_ads <- append(all_ads, ERC1155_data$fromAddress)
+all_ads <- append(all_ads, ERC1155_data$toAddress)
+all_ads <- unique(unlist(all_ads))
+
+# Count the number of times different tokens have been traded
+token_trades <- ERC1155_data %>%
+  group_by(tokenId) %>%
+  summarise(Count = n())  %>%
+  arrange(-Count)
+
+
+```
+
+
+```{r using_ERC1155_data}
+library(viridis)
+
+ERC1155_data <- readRDS("data/ERC1155_data_07_v2.rds",)
+ERC20_data <- read.csv("Dataset/Dataset.csv",
+                       colClasses=c("from_address"="character",
+                                    "to_address"="character"))
+ERC20_graph <- graph(c(ERC20_data$from_address,
+                       ERC20_data$to_address),
+                       directed = TRUE)
+
+
+ERC20_scams <- ERC20_data %>% filter(from_scam==1 | to_scam == 1)
+
+# Get all unique addresses in suspicious dataset
+erc1155_all_ads <- list()
+erc1155_all_ads <- append(erc1155_all_ads, ERC1155_data$fromAddress)
+erc1155_all_ads <- append(erc1155_all_ads, ERC1155_data$toAddress)
+erc1155_all_ads <- unique(unlist(erc1155_all_ads))
+
+# Count the number of times different tokens have been traded
+token_trades <- ERC1155_data %>%
+  group_by(tokenId) %>%
+  summarise(Count = n())  %>%
+  arrange(-Count)
+
+
+```
+
+
+```{r using_ERC1155_data}
+library(viridis)
+
+# Can we use ERC1155 data addresses to gather more information??
+ERC1155_preds <- read.csv("data/ERC1155_scam_preds_labs_2.csv",
+                  colClasses=c("address"="character"))#read.csv("data/ERC1155_scam_preds_labs.csv",
+                  #       colClasses=c("address"="character"))
+
+# Get all unique addresses in suspicious dataset
+all_ads <- list()
+all_ads <- append(all_ads, ERC1155_preds$address)
+all_ads <- unique(unlist(all_ads))
+
+ads_balance <- tibble(address = character(),
+                      eth_balance = double(),
+                      no_of_trxns = integer())
+
+for (i in 1:length(all_ads)){
+  address <- all_ads[i]
+  if (eth_getBalance(address) != 0){
+    ads_balance <- ads_balance %>%
+      add_row(address = address,
+              eth_balance = as.ether(as.double(eth_getBalance(address))),
+              no_of_trxns = eth_getTransactionCount(address))
+  }
+}
+
+# All - unique = 10907 - 4216
+# 4216 distinct tokens traded 10907 times
+length(ERC1155_data$tokenId) - length(unique(ERC1155_data$tokenId))
+
+# Finding most frequently traded tokens
+freq_tokens <- ERC1155_data %>%
+  group_by(tokenId) %>%
+  summarise(count = n()) %>%
+  arrange(-count)
+
+# Let's look at the addresses involved in trading the second most frequently traded token
+# (Most frequenrt is '...dead')
+
+token_0x5 <-  ERC1155_data %>% 
+  filter(tokenId == freq_tokens$tokenId[2])
+
+# Are theses addresses those that are predicted to be scams?
+sim_ads <- token_0x5 %>% filter(fromAddress %in% all_ads)
+
+# Of the 4,628 trades of this token, 65 were sent by 52 unique addresses that were predicted to be a scam address
+
+graph_0x5 <- graph(c(sim_ads$fromAddress,
+                     sim_ads$toAddress))
+E(graph_0x5)$weight <- (sim_ads$priceETH)*(10^18)
+E(graph_0x5)$token <- sim_ads$tokenId
+V(graph_0x5)$color <- sort(as.factor(sim_ads$fromAddress))
+
+# Order by timestamp
+sim_ads <- sim_ads %>% arrange(dateTime) %>%
+  mutate(order = 1:length(dateTime))
+E(graph_0x5)$label <- sim_ads$order
+
+# Summing all weights for "in" transactions
+V(graph_0x5)$strength <- strength(graph_0x5,
+                                  V(graph_0x5),
+                                  mode = "in", 
+                                  loops = TRUE)
+lyt <- layout_with_graphopt(graph_0x5)
+lyt <- layout_with_lgl(graph_0x5)
+
+
+jpeg(file="ERC1155_preds_tradeing_top_token.jpeg", width=1200,
+     height=700)
+
+plot(graph_0x5,
+     layout = lyt,
+     vertex.label = "",
+     #vertex.fill = V(graph_0x5)$color,
+     vertex.color = 'red',
+     vertex.label.cex = 1,
+     vertex.size = 7,
+     edge.label.dist=10.5, 
+     edge.label = E(graph_0x5)$label,
+     edge.label.cex = 1.2,
+     edge.width = 3,
+     edge.arrow.size = 0.5,
+     edge.color = 'gray',
+     edge.curved = .25,
+     edge.alpha = (E(graph_0x5)$weight-1)/3 +0.1,) 
+
+
+```
+
+```{r Exploratory_DA}
+# Degree distributions
+deg <- degree(ERC1155_graph, mode = "in")
+#4509
+
+hist(deg, 
+     #breaks=(min(deg)-1):(max(deg))+0.5,
+     breaks = seq(0, max(deg)+1, 2),
+     freq=FALSE, 
+     xlab = "in-degree", 
+     ylab = "proportion", 
+     main = "ERC1155 In-Degree Distribution",
+     border="#80b1d3", 
+     col="#8dd3c7", 
+     xlim=c(0,20),#max(deg)),
+     ylim=c(0,0.46))
+
+# Compare this to the addresses predicted to be scams
+
+ERC1155_sus <- ERC1155_data %>% 
+  filter(toAddress %in% all_ads)
+
+ERC1155_sus_graph <- graph(c(ERC1155_sus$fromAddress,
+                             ERC1155_sus$toAddress),
+                           directed = TRUE)
+
+deg <- degree(ERC1155_sus_graph, mode = "in")
+# Max degree is 4099
+
+hist(deg, 
+     #breaks=(min(deg)-1):(max(deg))+0.5,
+     breaks = seq(0, max(deg)+1, 2),
+     freq=FALSE, 
+     xlab = "in-degree", 
+     ylab = "proportion", 
+     main = "ERC1155 Predicted Scams In-Degree Distribution",
+     border="#80b1d3", 
+     col="#8dd3c7", 
+     xlim=c(0,20),#max(deg)),
+     ylim=c(0,0.46))
+
+deg<-degree(ERC1155_graph, mode = "out")
+# Max degree is 4495
+
+hist(deg, 
+     breaks = seq(0, max(deg)+1, 2),
+     freq=FALSE, 
+     xlab = "out-degree", 
+     ylab = "proportion", 
+     main = "ERC1155 - Out-Degree Distribution",
+     border="#80b1d3", 
+     col="#8dd3c7", 
+     xlim=c(0,20),
+     ylim=c(0,0.5))
+
+ERC1155_sus <- ERC1155_data %>% 
+  filter(fromAddress %in% all_ads)
+
+ERC1155_sus_graph <- graph(c(ERC1155_sus$fromAddress,
+                             ERC1155_sus$toAddress),
+                           directed = TRUE)
+
+deg<-degree(ERC1155_sus_graph, mode = "out")
+# Max degree is 4160
+
+hist(deg, 
+     breaks = seq(0, max(deg)+1, 2),
+     freq=FALSE, 
+     xlab = "out-degree", 
+     ylab = "proportion", 
+     main = "ERC1155 Predicted Scams - Out-Degree Distribution",
+     border="#80b1d3", 
+     col="#8dd3c7", 
+     xlim=c(0,20),
+     ylim=c(0,0.5))
+
+```
+
+```{r data_exploration}
+
+mean_distance(ERC1155_graph,
+              directed=TRUE,
+              unconnected=TRUE)
+# Average path length of ERC1155: 4.942613
+
+# ERC1155 Predicted Scam transactions
+ERC155_pred_scam <- ERC1155_data %>% 
+  filter(fromAddress %in% all_ads | toAddress %in% all_ads)
+
+ERC155_pred_scam_graph <- graph(c(ERC155_pred_scam$fromAddress,
+                                  ERC155_pred_scam$toAddress),
+                                directed = TRUE)
+
+mean_distance(ERC155_pred_scam_graph,
+              directed=TRUE,
+              unconnected=TRUE)
+
+# Average path length of ERC1155 Predicted Scams: 4.90939
+
+```
+
+```{r Community_Detection}
+
+labprop <- cluster_walktrap(ERC1155_graph)
+
+```

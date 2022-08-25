@@ -1,0 +1,472 @@
+---
+title: "Exploratory Data Analysis"
+author: "Tatiana Rosenberg"
+date: '2022-08-21'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r GCN}
+library(dplyr)
+library(igraph)
+library(tibble)
+
+ERC1155_data <- readRDS("data/ERC1155_data_07_v2.rds")
+ERC20_data <- read.csv("Dataset/Dataset.csv",
+                       colClasses = c('hash'='character',
+                                      'transaction_index'='character',
+                                    'from_address'='character',
+                                    'to_address'='character'))
+
+ERC1155_data <- ERC1155_data %>% select(fromAddress, toAddress,
+                                        data, blockNumber,
+                                        transactionHash,
+                                        transactionIndex, dateTime,
+                                        priceETH, gasPrice,
+                                        gasUsed)
+ERC20_data <- ERC20_data %>% select(hash, transaction_index,
+                                    from_address, to_address,
+                                    value, input, block_timestamp,
+                                    block_number, gas_price,
+                                    receipt_gas_used, from_scam,
+                                    to_scam)
+
+ERC1155_graph = graph(c(ERC1155_data$fromAddress,
+                        ERC1155_data$toAddress),
+                      directed = TRUE)
+
+ERC20_graph = graph(c(ERC20_data$from_address,
+                        ERC20_data$to_address),
+                      directed = TRUE)
+
+ERC20_graph = set_edge_attr(ERC20_graph, 'hash',
+              index = E(ERC20_graph), ERC20_data$hash)
+ERC20_graph = set_edge_attr(ERC20_graph, 'transaction_index',
+              index = E(ERC20_graph), ERC20_data$transaction_index)
+ERC20_graph = set_edge_attr(ERC20_graph, 'value',
+              index = E(ERC20_graph), ERC20_data$value)
+ERC20_graph = set_edge_attr(ERC20_graph, 'input',
+              index = E(ERC20_graph), ERC20_data$input)
+ERC20_graph = set_edge_attr(ERC20_graph, 'block_timestamp',
+              index = E(ERC20_graph), ERC20_data$block_timestamp)
+ERC20_graph = set_edge_attr(ERC20_graph, 'block_number',
+              index = E(ERC20_graph), ERC20_data$block_number)
+ERC20_graph = set_edge_attr(ERC20_graph, 'gas_price',
+              index = E(ERC20_graph), ERC20_data$gas_price)
+ERC20_graph = set_edge_attr(ERC20_graph, 'receipt_gas_used',
+              index = E(ERC20_graph), ERC20_data$receipt_gas_used)
+
+from_scams <- ERC20_data %>% group_by(from_address) %>%
+  filter(from_scam == 1) %>% select(from_address)
+to_scams <- ERC20_data %>% group_by(to_address) %>%
+  filter(to_scam == 1) %>% select(to_address)
+
+scams <- unique(unlist(c(from_scams$from_address, to_scams$to_address)))
+
+ERC20_graph = set_vertex_attr(ERC20_graph, 'scam',
+                            index = match(scams, V(ERC20_graph)$name),
+                            value = rep(1, length(scams)))
+
+```
+
+```{r ETH_EDA}
+
+in_deg<-degree(ERC20_graph, mode="in")
+ETH_max_in_adr <- V(ERC20_graph)[V(ERC20_graph) == which(in_deg==max(in_deg))]
+ETH_max_in_scam <- ETH_max_in_adr$scam
+
+out_deg<-degree(ERC20_graph, mode="out")
+ETH_max_out_adr <- V(ERC20_graph)[V(ERC20_graph) == which(out_deg==max(out_deg))]
+ETH_max_out_scam <- ETH_max_out_adr$scam
+
+components(ERC20_graph, mode="strong")$csize
+components(ERC20_graph, mode="weak")$csize
+
+##################################################
+ego_node <- V(ERC20_graph)[ETH_max_in_adr$name]
+
+# these gets the incident edges of the ego_node in terms of in and out links
+ego_edges <-incident(ERC20_graph, ego_node, mode="all")
+
+# level 1 ego net, which is a subgraph of the original network
+ego_net1<- subgraph.edges(ERC20_graph, ego_edges, 
+                          delete.vertices = TRUE)
+
+ego_layout<-layout_as_star(ego_net1, center=V(ego_net1)[ETH_max_in_adr$name])
+
+neighbors <-neighbors(ERC20_graph, ego_node, mode="all")
+
+ego_nodes1.5 <- c(ego_node,neighbors )
+
+# induced_subgraph creates a subgraph of the original network from the input list of nodes
+ego_net1.5<- induced_subgraph(ERC20_graph, ego_nodes1.5)
+
+jpeg('ETH_ego_centric_in.jpeg', width=1200,
+     height=700)
+par(mar=c(0,0,2,0))
+plot(ego_net1.5,layout =ego_layout,
+     vertex.color=rgb(1,0.7,0,0.3),
+    vertex.size= ifelse(V(ego_net1)$name==ETH_max_in_adr$name, 20, 10),
+     vertex.size=10, 
+     #vertex.frame.color="gray", 
+     vertex.label.color="black", 
+     vertex.label.cex = 2, 
+     vertex.label.dist=1.5, 
+     vertex.label = ifelse(V(ego_net1.5)$scam==1, 'scam', 'non-scam'),
+     vertex.label = 'non-scam',
+    edge.curved=0.2, 
+     edge.width= 0.5, # E(g)$weight*20, 
+     edge.arrow.size=0.3,  
+     #edge.label = E(ego_net1)$block_timestamp,
+     #edge.label.cex=0.5 , 
+     #edge.label.dist=1.5, 
+    edge.arrow.width=0.3)
+
+#####################################################
+
+ego_node <- V(ERC20_graph)[ETH_max_out_adr$name]
+
+# these gets the incident edges of the ego_node in terms of in and out links
+ego_edges <-incident(ERC20_graph, ego_node, mode="all")
+
+# level 1 ego net, which is a subgraph of the original network
+ego_net1<- subgraph.edges(ERC20_graph, ego_edges, 
+                          delete.vertices = TRUE)
+
+ego_layout<-layout_as_star(ego_net1, center=V(ego_net1)[ETH_max_out_adr$name])
+
+neighbors <-neighbors(ERC20_graph, ego_node, mode="all")
+
+ego_nodes1.5 <- c(ego_node,neighbors )
+
+# induced_subgraph creates a subgraph of the original network from the input list of nodes
+ego_net1.5<- induced_subgraph(ERC20_graph, ego_nodes1.5)
+
+jpeg('ETH_ego_centric_out.jpeg', width=1200,
+     height=700)
+par(mar=c(0,0,2,0))
+plot(ego_net1.5,layout =ego_layout,
+     vertex.color=rgb(1,0.7,0,0.3),
+    vertex.size= ifelse(V(ego_net1)$name==ETH_max_out_adr$name, 10, 3),
+     vertex.size=10, 
+     vertex.frame.color="gray", 
+     vertex.label.color="black", 
+     vertex.label.cex = 3 , 
+     vertex.label.dist=1.5, 
+     vertex.label = ifelse(V(ego_net1.5)$scam==1, 'scam', 'non-scam'),
+     edge.curved=0.2, 
+     edge.width= 0.15, # E(g)$weight*20, 
+     edge.arrow.size=0.1,  
+     #edge.label = E(ego_net1)$block_timestamp,
+     #edge.label.cex=0.5 , 
+     #edge.label.dist=1.5, 
+    edge.arrow.width=0.1)
+
+#####################################################
+
+diameter(ERC20_graph, directed = FALSE, 
+         unconnected = TRUE, weights=NA) # 15
+diam_erc20 = diameter(ERC20_graph, directed = TRUE, 
+         unconnected = TRUE, weights=NA) # 15
+
+# This function gives the pair of nodes with longest shortest path between them in the network
+far <- farthest_vertices(ERC20_graph, directed = TRUE,
+                         weights=NA)
+far # Neither are scams
+
+mean_dist_erc20 = mean_distance(ERC20_graph, directed = TRUE, unconnected=TRUE)
+# 4.256216
+
+transivity_erc20 = transitivity(ERC20_graph, type="localaverage", isolates ="zero")
+# 0.004488131
+
+transitivity(ego_net1.5, type="localaverage", isolates ="zero")
+# 0.2329549
+
+eig1<- eigen_centrality(ERC20_graph, directed = TRUE,
+                        weights=NA)$vector
+
+V(ERC20_graph)[which(eig1 == max(eig1))]$scam
+# Scam - not the same address as the max in degree
+# Max:
+# Min:
+# Median:
+# Mean:
+
+cent <- betweenness(ERC20_graph, directed = TRUE,
+                   weights=NA)
+V(ERC20_graph)[which(cent == max(cent))]$scam
+# Not a scam
+# Max: 39651715
+# Min: 0
+# Median: 0
+# Mean: 5965.291
+
+cent2 <- edge_betweenness(ERC20_graph, directed = TRUE,
+                          weights=NA)
+E(ERC20_graph)[which(cent2 == max(cent2))]$scam
+# Sending vertex: 0x48337105dc18d24a353fce422b3dc067f6438bae
+V(ERC20_graph)['0x48337105dc18d24a353fce422b3dc067f6438bae']$scam
+# Not a scam
+# Receiving vertex: 0x29d5527caa78f1946a409fa6acaf14a0a4a0274b
+V(ERC20_graph)['0x29d5527caa78f1946a409fa6acaf14a0a4a0274b']$scam
+# Not a scam
+# Max: 2299492
+# Min: 0
+# Median: 2
+# Mean: 7992.494
+
+cent3 <- closeness(ERC20_graph)
+V(ERC20_graph)[which(cent3 == max(cent3))]$scam
+# Not a scam
+# Max: 2.231205e-10
+# Min: 1.874804e-10
+# Median: 1.874829e-10
+# Mean: 1.930756e-10
+
+eig1_scams = eig1[which(names(eig1) %in% scams)]
+
+cent_scams = cent[which(names(cent) %in% scams)]
+
+#cent2_scams = cent2[ERC1155_preds$address]
+
+cent3_scams = cent3[which(names(cent3) %in% scams)]
+
+```
+
+```{r EDA_ERC1155}
+
+vs = V(ERC1155_graph)[V(ERC1155_graph)$name!='0x0000000000000000000000000000000000000000']
+
+ERC1155_graph <- induced_subgraph(ERC1155_graph,
+                                  vs,)
+
+in_deg<-degree(ERC1155_graph, mode="in")
+out_deg<-degree(ERC1155_graph, mode="out")
+
+components(ERC1155_graph, mode="strong")$csize
+components(ERC1155_graph, mode="weak")$csize
+
+##################################################
+ERC1155_max_in_adr <- V(ERC1155_graph)[V(ERC1155_graph) == which(in_deg==max(in_deg))]
+# 0x8010d5c63d426c5809ab05ce27493e21b7022be0
+
+ego_node <- V(ERC1155_graph)[ERC1155_max_in_adr$name]
+
+# these gets the incident edges of the ego_node in terms of in and out links
+ego_edges <-incident(ERC1155_graph, ego_node, mode="all")
+
+# level 1 ego net, which is a subgraph of the original network
+ego_net1<- subgraph.edges(ERC1155_graph, ego_edges, 
+                          delete.vertices = TRUE)
+
+ego_layout<-layout_as_star(ego_net1, center=V(ego_net1)[ERC1155_max_in_adr$name])
+
+neighbors <-neighbors(ERC1155_graph, ego_node, mode="all")
+
+ego_nodes1.5 <- c(ego_node,neighbors )
+
+# induced_subgraph creates a subgraph of the original network from the input list of nodes
+ego_net1.5<- induced_subgraph(ERC1155_graph, ego_nodes1.5)
+
+jpeg('ERC1155_ego_centric_in_1.jpeg', width=1200,
+     height=700)
+par(mar=c(0,0,2,0))
+plot(ego_net1.5,layout =ego_layout,
+     vertex.color=rgb(1,0.7,0,0.3),
+    vertex.size= ifelse(V(ego_net1)$name==ERC1155_max_in_adr$name, 20, 10),
+     vertex.size=10, 
+     #vertex.frame.color="gray", 
+     vertex.label.color="black", 
+     vertex.label.cex = 2, 
+     vertex.label.dist=1.5,
+    vertex.label = '',
+     edge.curved=0.2, 
+     edge.width= 0.5, # E(g)$weight*20, 
+     #edge.label = E(ego_net1)$block_timestamp,
+     #edge.label.cex=0.5 , 
+     #edge.label.dist=1.5, 
+    edge.arrow.size=0.7,  
+    edge.arrow.width=0.3)
+
+#####################################################
+ERC1155_max_out_adr <- V(ERC1155_graph)[V(ERC1155_graph) == which(out_deg==max(out_deg))]
+
+ego_node <- V(ERC1155_graph)[ERC1155_max_out_adr$name]
+
+# these gets the incident edges of the ego_node in terms of in and out links
+ego_edges <-incident(ERC1155_graph, ego_node, mode="all")
+
+# level 1 ego net, which is a subgraph of the original network
+ego_net1<- subgraph.edges(ERC1155_graph, ego_edges, 
+                          delete.vertices = TRUE)
+
+ego_layout<-layout_as_star(ego_net1, center=V(ego_net1)[ERC1155_max_out_adr$name])
+
+neighbors <-neighbors(ERC1155_graph, ego_node, mode="all")
+
+ego_nodes1.5 <- c(ego_node,neighbors )
+
+# induced_subgraph creates a subgraph of the original network from the input list of nodes
+ego_net1.5<- induced_subgraph(ERC1155_graph, ego_nodes1.5)
+
+jpeg('ERC1155_ego_centric_out_1.jpeg', width=1200,
+     height=700)
+par(mar=c(0,0,2,0))
+plot(ego_net1.5,layout =ego_layout,
+     vertex.color=rgb(1,0.7,0,0.3),
+    vertex.size= ifelse(V(ego_net1)$name==ERC1155_max_out_adr$name, 20, 10),
+     vertex.size=10, 
+     vertex.frame.color="gray", 
+     vertex.label.color="black", 
+     vertex.label.cex = 3 , 
+     vertex.label.dist=1.5, 
+     vertex.label = '',
+     edge.curved=0.2, 
+     edge.width= 0.5, # E(g)$weight*20, 
+     edge.arrow.size=0.7,  
+    edge.arrow.width=0.3)
+
+#####################################################
+
+diam_erc1155 = diameter(ERC1155_graph, directed = TRUE, 
+         unconnected = TRUE, weights=NA) # 15
+
+mean_dist_erc1155 = mean_distance(ERC1155_graph, directed = TRUE, 
+              unconnected=TRUE)
+# 4.942613
+
+transitivity_erc1155 = transitivity(ERC1155_graph, type="localaverage", isolates ="zero")
+# 0.01546684
+
+transitivity(ego_net1.5, type="localaverage", isolates ="zero")
+# 
+
+eig1<- eigen_centrality(ERC1155_graph, directed = TRUE,
+                        weights=NA)$vector
+
+V(ERC1155_graph)[which(eig1 == max(eig1))]
+# None - 0x8010d5c63d426c5809ab05ce27493e21b7022be0
+# Max: 1
+# Min: 0
+# Median: 5.289304e-14
+# Mean: 1.814617e-05
+
+cent <- betweenness(ERC1155_graph, directed = TRUE,
+                   weights=NA)
+V(ERC1155_graph)[which(cent == max(cent))]
+# Contract - 0x10cdcb5a80e888ec9e9154439e86b911f684da7b
+
+#cent2 <- edge_betweenness(ERC1155_graph, directed = TRUE,
+#                          weights=NA)
+#E(ERC1155_graph)[which(cent2 == max(cent2))]
+
+
+cent3 <- closeness(ERC1155_graph)
+V(ERC1155_graph)[which(cent3 == max(cent3))]
+# None - 0xdba2b1fb866afb98c0c94a15292e71917a9efc9e
+# daxio.eth
+
+
+```
+
+```{r scam_analysis}
+
+ERC1155_preds = read.csv('data/ERC1155_scam_preds_labs_2.csv',
+                         colClasses = c('address'='character'))
+
+eig1_preds = eig1[which(names(eig1) %in% ERC1155_preds$address)]
+
+cent_preds = cent[which(names(cent) %in% ERC1155_preds$address)]
+
+#cent2_preds = cent2[ERC1155_preds$address]
+
+cent3_preds = cent3[which(names(cent3) %in% ERC1155_preds$address)]
+
+df_raw <- tibble('Min Eigen Centrality' = c('ETH Scmas'=min(eig1_scams),
+                                  'ERC1155 Predictions'=min(eig1_preds)),
+                 'Max Eigen Centrality' = c('ETH Scmas'=max(eig1_scams),
+                                  'ERC1155 Predictions'=max(eig1_preds)),
+                 'Median Eigen Centrality' = c('ETH Scmas'=median(eig1_scams),
+                                  'ERC1155 Predictions'=median(eig1_preds)),
+                 'Mean Eigen Centrality' = c('ETH Scmas'=mean(eig1_scams),
+                                  'ERC1155 Predictions'=mean(eig1_preds)),
+                 'Min Betweeness Centrality' = c('ETH Scmas'=min(cent_scams),
+                                  'ERC1155 Predictions'=min(cent_preds)),
+                 'Max Betweeness Centrality' = c('ETH Scmas'=max(cent_scams),
+                                  'ERC1155 Predictions'=max(cent_preds)),
+                 'Median Betweeness Centrality' = c('ETH Scmas'=median(cent_scams),
+                                  'ERC1155 Predictions'=median(cent_preds)),
+                 'Mean Betweeness Centrality' = c('ETH Scmas'=mean(cent_scams),
+                                  'ERC1155 Predictions'=mean(cent_preds)),
+                 'Min Closeness Centrality' = c('ETH Scmas'=min(cent3_scams),
+                                  'ERC1155 Predictions'=min(cent3_preds)),
+                 'Max Closeness Centrality' = c('ETH Scmas'=max(cent3_scams),
+                                  'ERC1155 Predictions'=max(cent3_preds)),
+                 'Median Closeness Centrality' = c('ETH Scmas'=median(cent3_scams),
+                                  'ERC1155 Predictions'=median(cent3_preds)),
+                 'Mean Closeness Centrality' = c('ETH Scmas'=mean(cent3_scams),
+                                  'ERC1155 Predictions'=mean(cent3_preds)))
+                 
+rownames(df_raw) <- c('ETH Scams', 'ERC1155 Predictions')
+                 
+kbl(df_raw, "html",
+    caption="<center><center>",
+    ) %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down") %>%
+  #column_spec(1, width = "20em") %>%
+  save_kable("Centralities_Scam.pdf")
+
+
+```
+```{r tables}
+df_raw = tibble('Nodes' = c('ETH Scmas'=length(V(ERC20_graph)),
+                            'ERC1155 Predictions'=length(V(ERC1155_graph))),
+                'Edges'=c('ETH Scmas'=length(E(ERC20_graph)),
+                            'ERC1155 Predictions'=length(E(ERC1155_graph))),
+                'Diameter'=c('ETH Scmas'=diam_erc20,
+                              'ERC1155 Predictions'=diam_erc1155),
+                'Mean Distance' = c('ETH Scmas'=mean_dist_erc20,
+                              'ERC1155 Predictions'=mean_dist_erc1155),
+                'Transivity' = c('ETH Scmas'=transivity_erc20,
+                              'ERC1155 Predictions'=transitivity_erc1155))
+
+rownames(df_raw) = c('ETH Graph', 'ERC1155 Graph')
+
+kbl(df_raw, "html",
+    caption="<center><center>",
+    ) %>%
+  kable_styling(c("condensed", "hover"), 
+                full_width = F,
+                font_size = 10, 
+                latex_options = "scale_down") %>%
+  #column_spec(1, width = "20em") %>%
+  save_kable("GA_table.pdf")
+
+```
+
+```{r self_loops}
+
+simp_g_1155 = simplify(ERC1155_graph,
+  remove.multiple = FALSE,
+  remove.loops = TRUE)
+
+simp_g_20 = simplify(ERC20_graph,
+  remove.multiple = FALSE,
+  remove.loops = TRUE)
+
+length(E(simp_g_1155))
+length(E(ERC1155_graph))
+
+length(E(simp_g_20))
+length(E(ERC20_graph))
+
+```
+
+

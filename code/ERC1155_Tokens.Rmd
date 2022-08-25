@@ -1,0 +1,334 @@
+---
+title: "ERC1155 TXNs NFT"
+author: "Tatiana Rosenberg"
+date: '2022-04-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Retrieving Data
+
+```{r libraries}
+library(knitr)
+library(tidyverse)
+library(httr)
+library(jsonlite)
+library(plotly)
+library(patchwork)
+library(cowplot)
+library(network)
+library(ggraph)
+library(networkDynamic)
+library(ndtv)
+library(tsna)
+library(lubridate)
+```
+
+```{r data}
+
+# EtherScan requires an API key
+EtherScanAPIToken <- "392REDDRCFX3XZCRZR41EVIJERGSKXNIRS" 
+
+dataEventTransferList <- list()
+continue <- 1
+i <- 0
+
+while(continue == 1){ # we will run trough the earliest blocks mentioning Weird whales to the most recent.
+  i <- i + 1
+  print(i)
+  if(i == 1){fromBlock = 14468464} #first block on OpenSeas ERC1155
+  
+  # load the transfer events from the Weird Whale contract
+  resEventTransfer <- GET("https://api.etherscan.io/api",
+                          query = list(module = "logs", 
+                                       action = "getLogs", 
+                                       fromBlock = fromBlock, 
+                                       toBlock = "latest",
+                                       #address = "0x495f947276749Ce646f68AC8c248420045cb7b5e", # address of the OpenSeas contract
+                                       topic0 = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62", # hash of the transfer event -> 'TransferSingle'
+                                       apikey = EtherScanAPIToken)) 
+  
+  dataEventTransferList[[i]] <- fromJSON(rawToChar(resEventTransfer$content), 
+        flatten = T)$result 
+  
+  if(i > 1){
+    if(all_equal(dataEventTransferList[[i]], dataEventTransferList[[i-1]]) == T){continue <- 0}  
+  } # at some point, we reached the latest transactions and we can stop
+  
+  fromBlock <- max(as.numeric(dataEventTransferList[[i]]$blockNumber)) # increase the block to start looking at for the next iteration
+}
+
+dataEventTransfer <- bind_rows(dataEventTransferList) %>% # coerce the list to dataframe
+  distinct() # eliminate potential duplicated rows 
+
+# data needs to be reshaped
+dataEventTransfer <- dataEventTransfer %>% 
+  rename(contractAddress = address) %>%
+  mutate(dateTime = as.POSIXct(as.numeric(timeStamp), 
+          origin = "1970-01-01")) %>% # convert the date in a human readable format
+  mutate(topics = purrr::map(topics, setNames, c("eventHash","fromAddress","toAddress","tokenId"))) %>% # it is important to set the names otherwise unnest_wider will print many warning messages.
+  unnest_wider(topics) %>% # reshape the topic column (list) to get a column for each topic. 
+  mutate(tokenId = tokenId, #as.character(as.numeric(tokenId)), # convert Hexadecimal to numeric
+         blockNumber = as.numeric(blockNumber),
+         fromAddress = paste0("0x", str_sub(fromAddress,-40,-1)), # reshape the address format 
+         toAddress = paste0("0x", str_sub(toAddress,-40,-1))) %>%
+    select(-data, -timeStamp, -logIndex)
+
+#saveRDS(dataEventTransfer, "data/dataEventTransfer_07_v2.rds")
+
+```
+
+```{r the_data}
+
+dataEventTransfer <- readRDS("data/dataEventTransfer_07_v2.rds") 
+
+glimpse(dataEventTransfer)
+
+```
+
+```{r data_update}
+
+dataEvent <- dataEventTransfer %>%
+  mutate(priceETH = str_sub(data, start = -64), 
+         priceETH = as.numeric(paste0("0x", priceETH)),
+         priceETH = priceETH / 10^18)  %>% # this is expressed in Wei, the smallest denomination of ether. 1 ether = 1,000,000,000,000,000,000 Wei (10\^18).
+  select(priceETH, transactionHash)
+
+```
+
+```{r prices}
+
+ERC1155_data <- dataEventTransfer %>%
+  mutate(priceETH = dataEvent$priceETH)
+glimpse(ERC1155_data)
+
+#saveRDS(ERC1155_data, "data/ERC1155_data_07_v2.rds")
+
+```
+
+```{r ERC1155_data}
+
+# First batch of data collected April 19th, 2022
+
+# This batch of data collection May 18th, 2022
+#ERC1155_data <- readRDS("data/ERC1155_data.rds")
+
+#This batch of data collected ?, 2022
+ERC1155_data <- readRDS("data/ERC1155_data_07_v2.rds")
+
+ERC1155_data <- ERC1155_data %>%
+  arrange(dateTime)
+
+glimpse(ERC1155_data)
+
+```
+
+```{r exploring_ERC1155}
+
+# There are 90,702 addresses sending the 206,645 transactions
+length(unique(ERC1155_data$fromAddress))
+
+# There are 73,227 addresses receiving the ? transactions
+length(unique(ERC1155_data$toAddress))
+
+all_ads <- list()
+all_ads <- append(all_ads, ERC1155_data$fromAddress)
+all_ads <- append(all_ads, ERC1155_data$toAddress)
+all_ads <- unique(unlist(all_ads))
+# 127,356 unique addresses in total
+
+ERC1155_explore <- ERC1155_data %>%
+  group_by(fromAddress) %>%
+  summarize(receiving = toAddress)
+
+# The transactions which are sent and received by the same address
+# There are 85,534 of such transactions
+ERC1155_explore[which(ERC1155_explore$receiving == ERC1155_explore$fromAddress),]
+
+# There are 32,317 unique addresses selling and sending to themselves
+sus_ads <- unique(ERC1155_explore[which(ERC1155_explore$receiving == ERC1155_explore$fromAddress),]$fromAddress)
+
+# Original data of these addresses
+ERC1155_wt1 <- ERC1155_data[which(ERC1155_data$fromAddress %in% unique(ERC1155_explore[which(ERC1155_explore$receiving == ERC1155_explore$fromAddress),]$fromAddress)),]
+
+
+suspicious <- list()
+sus_ETH <- list()
+sus_USD <- list()
+
+for (i in 1:length(sus_ads)){
+  # Finding all transactions for an address
+  ad1 <- ERC1155_wt1[which(ERC1155_wt1$fromAddress == ERC1155_wt1$fromAddress[i]),] %>%
+    arrange(dateTime)
+  
+  # Exploring the time difference between these transactions
+  timeDiffs <- list()
+  for (j in 1:(length(ad1$dateTime)-1)){
+    timeDiffs[j] = (ad1$dateTime[j] - ad1$dateTime[j+1])
+  }
+  timeDiffs <- unlist(timeDiffs)
+  # Lots of transactions with no time difference!!
+
+  # Lets add the amount of money between these transactions
+  ETHSum <- list()
+  USDSum <- list()
+  m <- 0
+  if(length(ad1$fromAddress) > 1){
+    for (j in 1:(length(ad1$priceETH)-1)){
+      if((ad1$dateTime[j] - ad1$dateTime[j+1]) == 0){
+        if(ad1$tokenId[j] == ad1$tokenId[j+1]){
+          m <- m + 1
+          ETHSum[m] <- ad1$priceETH[j] + ad1$priceETH[j+1]
+          USDSum[m] <- ad1$priceUSD[j] + ad1$priceUSD[j+1]
+        }
+      }
+    }
+  }
+  ETHSum <- sum(unlist(ETHSum))
+  USDSum <- sum(unlist(USDSum))
+  
+  if(!is.na(ETHSum) & ETHSum > 0){
+    suspicious <- append(suspicious, ad1$toAddress[1])
+    sus_ETH <- append(sus_ETH, ETHSum)
+    sus_USD <- append(sus_USD, USDSum)
+  }
+}
+suspicious <- unlist(suspicious)
+sus_data <- ERC1155_data[which(ERC1155_data$toAddress %in% suspicious | ERC1155_data$fromAddress %in% suspicious),]
+
+sus_ETH <- unlist(sus_ETH)
+sus_USD <- unlist(sus_USD) # None over $0.00
+
+saveRDS(sus_data, "data/sus_data_07_v2.rds")
+
+```
+
+```{r sus_graph}
+library(igraph)
+library(viridis)
+
+#sus_data <- readRDS("data/sus_data.rds")
+sus_data <- readRDS("data/sus_data_07_v2.rds")
+
+sus_g <- graph(c(sus_data$fromAddress,
+           sus_data$toAddress))
+E(sus_g)$weight <- sus_data$priceETH
+E(sus_g)$token <- sus_data$tokenId
+E(sus_g)$color <- as.factor(sus_data$tokenId)
+
+# Summing all weights for "in" transactions
+V(sus_g)$strength <- strength(sus_g, V(sus_g),
+                              mode = "in", loops = TRUE) - strength(sus_g, V(sus_g),
+                              mode = "out", loops = TRUE)
+
+#sus_g_connected <- induced_subgraph(sus_g, V(sus_g)[components(sus_g, mode = "weak")$membership == 1])
+
+lyt <- layout_with_graphopt(sus_g)
+
+jpeg(file="saving_sus_plot1.jpeg", width=1200, height=700)
+par(mar=c(0,0,.1,0)+.01)
+plot(sus_g,#_connected,
+     layout = lyt,#layout_nicely(sus_g_connected),
+     vertex.size = V(sus_g)$strength * 5000, 
+     vertex.label = "",
+     edge.label = "",
+     edge.width = 0.3,
+     edge.arrow.size = 0.15,
+     edge.color = E(sus_g)$color,#sus_g$color,
+     edge.curved = 0.3,
+     edge.alpha = 0.8,
+     main = paste("Suspicious ERC1155"),
+     sub = paste("")) 
+
+# Hairball graph
+# Let's find the addresses
+
+v_sussy <- V(sus_g)[V(sus_g)$strength %in% sort(V(sus_g)$strength, decreasing = TRUE)[1:25]]
+
+# Let's look at a subgraph
+
+sussy_g <- induced_subgraph(sus_g, v_sussy)
+
+jpeg(file="top25_suspicious.jpeg", width=1200, height=700)
+par(mar=c(0,0,.1,0)+.01)
+plot(sussy_g,
+     layout = layout_with_fr(sussy_g),
+     vertex.size = 5, 
+     vertex.label = "",
+     edge.label = "",
+     edge.width = 0.3,
+     edge.arrow.size = 0.2,
+     edge.color = sussy_g$color,
+     edge.curved = 0.3,
+     main = paste("Top 25 Suspicious ERC1155 Addresses"),)
+     #sub = paste("Figure 2")) 
+
+# Getting the addresses involved in these transactions
+
+sussy_addresses <- V(sussy_g)$name
+ERC1155_sussy_data <- ERC1155_data %>% 
+  filter(toAddress %in% sussy_addresses | fromAddress %in% sussy_addresses)
+
+# 3,820 transactions involving these 25 addresses
+
+all_ads <- list()
+all_ads <- append(all_ads, ERC1155_sussy_data$fromAddress)
+all_ads <- append(all_ads, ERC1155_sussy_data$toAddress)
+all_ads <- unique(unlist(all_ads))
+
+# 3,820 transactions only involve 38 addresses in total
+# ?.??% of the transactions involve ?.??% of addresses
+
+# Can we find more data on these addresses using the 'ether' package?
+# Next notebook!
+
+#saveRDS(ERC1155_sussy_data, "data/ERC1155_Sussy_data_07.rds")
+
+```
+
+```{r suspicious_adrs}
+
+all_ads
+
+```
+[1] "0x62dc6ca212143d4c90ec97a599556cb93db058e9"    - Not_Labelled
+ [2] "0x0f67bb629d2bad63c5c93b8602741f90618b587b"   - Not_Labelled
+ [3] "0x1dc301854bfecb4ba03eb417579585c2b8ea12c1"   - Not_Labelled
+ [4] "0xae9d5478814305148fe82dbea70e72c7ff0abbde"   - contract
+ [5] "0x11ec5e51356fdc47ce49c85b0a0cc0c452d5a7b8"   - Not_Labelled
+ [6] "0x57aabed3cb1770a153ee8441b43394587030bd53"   - contract
+ [7] "0x3b983ebb1f99918e0f3875f356f63aec9274625f"   - Not_Labelled !!
+ [8] "0x3b3ac88fdfd33d8eb95d62d884ac552e46894887"   - Not_Labelled
+ [9] "0x62db7d32cdc64b06166b6c4dd19b70e6623a3130"   - Not_Labelled
+[10] "0xe107bae2f514f05c32a3988360856e09d1f587de"   - contract
+[11] "0x4758faf3bce50a7b0e68bb6de96753bb09db3da3"   - Not_Labelled
+[12] "0x456543be290fd44d9f27391090b2e12b47bd5a60"   - Not_Labelled
+[13] "0xdee6e218a58506756bb6ef474b651efaa4b4603a"   - contract
+[14] "0x8cf8b30b157ea322321964e295a7015c318cbd6d"   - Not_Labelled !
+[15] "0x3da06ebf0875f56ab3aabab747b6f5e386a5ad2d"   - contract
+[16] "0xdbb0a6eb6788d5c709bc71efb1d0b6faf7474702"   - contract
+[17] "0x28e781685d33bed35ef130e5845465b0b41e5e1c"   - contract !!
+[18] "0x7d92a038e9d7c21c2a4491b2273da8f8b522595c"   - contract
+[19] "0xa634a4e132ad5333d241539cbccb5f7660710ed3"   - Not_Labelled
+[20] "0xd5a754a056123c8fa8252da438c401044c6ff427"   - contract
+[21] "0x1afa7e683fa180630329a982b3fe5457404fa78b"   - contract !!!
+[22] "0xd56c08d1a7d1704e7f4458f6d15886ab93765fac"   - contract
+[23] "0xcb99b87104709ccab6258d9bfb842d52d9b81c5b"   - contract
+[24] "0xf111198aeb17585b1a50c640edb7a7c08bf2ee6c"   - contract
+[25] "0x3feb87bcf51b210632079f6369e4d353237da63b"   - Not_Labelled
+[26] "0xef8acc51b6411af79ffdad8182394f0d7792445b"   - Not_Labelled !!!
+[27] "0xd66d14e8da86f32ffad269c37e4e1123008092d5"   - Not_Labelled
+[28] "0x16c8a1b84b839320efa99206067135661916eeae"   - Not_Labelled
+[29] "0xfe9cde8fdbc3268b65459dbe7f81c45088aaa9ed"   - Not_Labelled
+[30] "0x3090c5e36d7b903ce1ffe782d370bd1ea52fc713"   - contract
+[31] "0x81e00ca198c40a49d9a95aa7941aeb558d5e8480"   - contract
+[32] "0x5a6f53a14e2399b8840e587601a6e379f8b28788"   - Not_Labelled
+[33] "0x895472a40d553dcab80cabab0a6fedec203bd387"   - Not_Labelled
+[34] "0x019ea349e3db4281630c8e0c9cf7c62d6557d790"   - Not_Labelled
+[35] "0x27792e7d87a5f05334b52c0584ad8497852aef8b"   - Not_Labelled
+[36] "0x4bde71348dfa0e73441cce24e974b505edc1bbf6"   - Not_Labelled
+[37] "0xcf159f4ddf537b26e09195a599642c3c06bf83f2"   - contract
+[38] "0xf8c3e78ddf55b07db7be22c737b417607de60702"   - 'Contract_Deployer'
